@@ -1,0 +1,38 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Rust build output (수 GB - 소스만 커밋, 빌드 산출물은 CI/로컬 빌드로 생성)
+src-tauri/target
+
+# PyInstaller로 빌드한 Flask sidecar 본체 + 모델 캐시(수 GB, exe/모델
+# 파일) - 소스 저장소에는 절대 안 올림. 릴리즈 시 별도로 빌드해 GitHub
+# Release 자산으로만 첨부한다(2026-09-30, Tauri 자동 업데이트 연동).
+src-tauri/binaries/*
+!src-tauri/binaries/.gitkeep
+
+# 업데이트 서명 개인키(.key) - 저장소에 절대 포함 금지, 로컬에만 보관
+# (공개키 .key.pub는 tauri.conf.json에 문자열로 들어가므로 별도 파일로
+# 커밋할 일 자체가 없음 - 그래도 혹시 남기지 않도록 함께 제외)
+tauri_updater_key*

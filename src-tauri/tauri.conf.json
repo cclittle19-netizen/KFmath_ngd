@@ -1,0 +1,48 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "NGD_KF",
+  "version": "0.1.0",
+  "identifier": "com.ngdkf.app",
+  "build": {
+    "frontendDist": "../src"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "NGD_KF",
+        "width": 1280,
+        "height": 860,
+        "url": "loading.html"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "createUpdaterArtifacts": true,
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "externalBin": ["binaries/NGD_KF"],
+    "resources": {
+      "binaries/_internal": "_internal"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDU0N0JFOTU5OTAwRUQzMEMKUldRTTB3NlFXZWw3VkVUNWZqWEtVdFdzZk5CNWRCMFl3WHF2c3pJU1dGSlhDRE1rNUpWWm1mYnoK",
+      "endpoints": [
+        "https://github.com/cclittle19-netizen/KFmath_ngd/releases/latest/download/latest.json"
+      ]
+    }
+  }
+}
