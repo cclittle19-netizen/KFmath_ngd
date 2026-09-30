@@ -114,7 +114,7 @@ async fn check_for_update_and_prompt(app_handle: &tauri::AppHandle) {
             let should_install = app_handle
                 .dialog()
                 .message(format!(
-                    "새 버전 {version}이(가) 있습니다.\n\n{notes}\n\n지금 업데이트할까요?\n(설치 후 프로그램이 자동으로 다시 시작됩니다)"
+                    "새 버전 {version}이(가) 있습니다.\n\n{notes}\n\n지금 업데이트할까요?\n(설치를 위해 프로그램이 잠시 종료됩니다 - 종료 후 아이콘을 다시 눌러 실행해주세요)"
                 ))
                 .title("NGD_KF 업데이트 확인")
                 .buttons(MessageDialogButtons::YesNo)
@@ -123,6 +123,25 @@ async fn check_for_update_and_prompt(app_handle: &tauri::AppHandle) {
                 println!("[NGD_KF] 사용자가 업데이트를 미뤘습니다.");
                 return;
             }
+            // Windows에서는 설치 프로그램이 실행되는 순간 이 프로세스가
+            // 강제 종료된다(Tauri 공식 문서: "the application is
+            // automatically exited when the install step is executed
+            // due to a limitation of Windows installers") - 그래서 아래
+            // app_handle.restart() 줄에 아예 도달하지 못할 수 있고,
+            // on_window_event의 CloseRequested 핸들러도 이 경로에서는
+            // 안 탄다(사용자가 창을 닫은 게 아니라 설치 프로그램이 강제
+            // 종료시키는 것이라 WM_CLOSE가 안 옴). 그 결과 sidecar가
+            // 고아로 남는 것을 실제 업데이트 테스트로 확인함(2026-09-30)
+            // - 그래서 다운로드/설치를 시작하기 "전에" 우리가 먼저
+            // sidecar를 확실히 내린다.
+            let sidecar_pid = app_handle
+                .state::<SidecarState>()
+                .0
+                .lock()
+                .unwrap()
+                .take()
+                .map(|c| c.pid());
+            shutdown_sidecar(sidecar_pid);
             if let Err(e) = update.download_and_install(|_chunk, _total| {}, || {}).await {
                 eprintln!("[NGD_KF] 업데이트 설치 실패: {e}");
                 app_handle
@@ -133,7 +152,7 @@ async fn check_for_update_and_prompt(app_handle: &tauri::AppHandle) {
                     .blocking_show();
                 return;
             }
-            println!("[NGD_KF] 업데이트 설치 완료 - 재시작합니다.");
+            println!("[NGD_KF] 업데이트 설치 완료 - 재시작 시도(Windows에서는 대개 여기 도달하지 못하고 위 설치 단계에서 이미 종료됨).");
             app_handle.restart();
         }
         Ok(None) => println!("[NGD_KF] 이미 최신 버전입니다."),
