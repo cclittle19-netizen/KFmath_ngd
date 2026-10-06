@@ -1,6 +1,6 @@
 [package]
 name = "tauri-app"
-version = "0.1.4"
+version = "0.1.5"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -32,9 +32,12 @@ tauri-plugin-dialog = "2.8.0"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
+# 빌드 시간 단축(2026-10-06): 이 Rust 코드는 sidecar를 띄우고 업데이트를
+# 확인하는 얇은 껍데기라 LTO/codegen-units=1의 런타임 이득이 사실상 없고,
+# 컴파일만 6~8분 걸렸다. 기본값(codegen-units=16, LTO 끔)으로 둔다.
 [profile.release]
-codegen-units = 1
-lto = true
+codegen-units = 16
+lto = false
 opt-level = 3
 panic = "abort"
 strip = true
