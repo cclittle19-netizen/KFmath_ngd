@@ -7,10 +7,12 @@
 // CommandChild.kill()만으로 고아 프로세스가 남을 수 있다는 알려진 문제
 // (tauri-apps/tauri#11686) 때문에 둘 다 건다(어느 한쪽만 믿지 않음).
 
+use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
 use std::sync::Mutex;
 use std::time::Duration;
-use tauri::{Manager, WindowEvent};
+use tauri::webview::DownloadEvent;
+use tauri::{Manager, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tauri_plugin_shell::process::CommandChild;
 use tauri_plugin_shell::ShellExt;
@@ -171,6 +173,106 @@ fn spawn_update_checker(app_handle: tauri::AppHandle) {
     });
 }
 
+// ---- 파일 다운로드 처리(2026-10-06, 한글 출력 "무반응" 대응) ----
+// 지금까지는 다운로드 처리기를 등록하지 않아서 WebView2 기본 동작에 맡겼다 - 그러면
+// 아무 안내 없이 다운로드 폴더에 조용히 저장되거나(실제로 개발 PC 다운로드 폴더에
+// ngd_export*.hwpx가 쌓여 있었음), 폴더가 없거나 쓸 수 없는 PC에서는 저장 자체가
+// 실패해도 사용자는 모달이 그냥 닫힌 것밖에 못 본다. 그래서 (1)저장 위치를 우리가
+// 정하고(다운로드 폴더, 없으면 만들고, 이름 충돌 시 " (n)" 붙임), (2)끝나면 저장
+// 경로와 "폴더 열기"를 항상 화면에 알려준다(실패하면 실패했다고도 알려준다).
+
+/// dir 안에서 name과 안 겹치는 경로("name (1).ext" ...)를 돌려준다.
+fn unique_download_path(dir: &Path, name: &std::ffi::OsStr) -> PathBuf {
+    let first = dir.join(name);
+    if !first.exists() {
+        return first;
+    }
+    let p = Path::new(name);
+    let stem = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "download".into());
+    let ext = p.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+    for n in 1..1000 {
+        let cand = dir.join(format!("{stem} ({n}){ext}"));
+        if !cand.exists() {
+            return cand;
+        }
+    }
+    first
+}
+
+/// 저장할 폴더: 다운로드 폴더 -> 문서 폴더 -> 임시 폴더 순(앞이 없거나 만들 수 없으면 다음).
+fn pick_download_dir(app: &tauri::AppHandle) -> PathBuf {
+    let candidates = [
+        app.path().download_dir().ok(),
+        app.path().document_dir().ok(),
+        Some(std::env::temp_dir()),
+    ];
+    for dir in candidates.into_iter().flatten() {
+        if std::fs::create_dir_all(&dir).is_ok() {
+            return dir;
+        }
+    }
+    std::env::temp_dir()
+}
+
+/// 탐색기에서 파일을 선택한 상태로 연다(Windows 전용, 실패해도 무시).
+fn reveal_in_explorer(path: &Path) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as WinCmdExt;
+        let _ = StdCommand::new("explorer.exe")
+            .raw_arg(format!("/select,\"{}\"", path.display()))
+            .spawn();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+    }
+}
+
+fn handle_download(app: &tauri::AppHandle, event: DownloadEvent<'_>) -> bool {
+    match event {
+        DownloadEvent::Requested { destination, .. } => {
+            let name = destination
+                .file_name()
+                .map(|n| n.to_os_string())
+                .unwrap_or_else(|| "ngd_export.hwpx".into());
+            *destination = unique_download_path(&pick_download_dir(app), &name);
+            println!("[NGD_KF] 다운로드 시작 -> {}", destination.display());
+            true
+        }
+        DownloadEvent::Finished { path, success, .. } => {
+            println!("[NGD_KF] 다운로드 종료: success={success} path={path:?}");
+            let h = app.clone();
+            // 다이얼로그는 다운로드 이벤트 콜백(웹뷰 스레드)을 막지 않도록 별도 스레드에서 띄운다.
+            std::thread::spawn(move || match (success, path) {
+                (true, Some(p)) => {
+                    let open = h
+                        .dialog()
+                        .message(format!("파일이 저장되었습니다.\n\n{}", p.display()))
+                        .title("저장 완료")
+                        .buttons(MessageDialogButtons::OkCancelCustom(
+                            "폴더 열기".into(),
+                            "닫기".into(),
+                        ))
+                        .blocking_show();
+                    if open {
+                        reveal_in_explorer(&p);
+                    }
+                }
+                _ => {
+                    h.dialog()
+                        .message("파일 저장에 실패했습니다.\n다운로드 폴더에 쓸 수 있는지 확인한 뒤 다시 시도해주세요.")
+                        .title("저장 실패")
+                        .buttons(MessageDialogButtons::Ok)
+                        .blocking_show();
+                }
+            });
+            true
+        }
+        _ => true,
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -180,6 +282,21 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(SidecarState(Mutex::new(None)))
         .setup(|app| {
+            // 메인 창을 코드에서 만든다(설정 파일엔 create:false로 두고 크기/제목/URL은 그대로
+            // 설정에서 읽음) - 그래야 on_download로 다운로드 처리기를 붙일 수 있다.
+            let main_cfg = app
+                .config()
+                .app
+                .windows
+                .iter()
+                .find(|w| w.label == "main")
+                .expect("tauri.conf.json에 label=main 창 설정이 없습니다")
+                .clone();
+            let dl_handle = app.handle().clone();
+            WebviewWindowBuilder::from_config(app.handle(), &main_cfg)?
+                .on_download(move |_webview, event| handle_download(&dl_handle, event))
+                .build()?;
+
             let (mut _rx, child) = app
                 .shell()
                 .sidecar("NGD_KF")
